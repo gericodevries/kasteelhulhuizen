@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1f1a14">
+<title>Kasteel Hulhuizen AR</title>
+<style>
+:root {
+  --ink: #f4ecdb;
+  --panel: rgba(28, 23, 17, .82);
+  --line: rgba(244, 236, 219, .25);
+  --brick: #e07a5c;
+  --ok: #8fc39a;
+  --warn: #f0c060;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #1f1a14; color: var(--ink); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+#video, #gl { position: fixed; inset: 0; width: 100%; height: 100%; }
+#video { object-fit: cover; }
+#gl { touch-action: none; }
+.preview #gl { background: linear-gradient(#9cc3e6 0%, #cfe2ef 49.6%, #7f9f55 50.4%, #5f7d3d 100%); }
+
+.bar { position: fixed; left: 0; right: 0; background: var(--panel); padding: 10px max(14px, env(safe-area-inset-left)) 10px max(14px, env(safe-area-inset-right)); display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+#top { top: 0; padding-top: calc(10px + env(safe-area-inset-top)); font-size: 14px; font-variant-numeric: tabular-nums; }
+#top b { font-weight: 600; }
+#bottom { bottom: 0; padding-bottom: calc(10px + env(safe-area-inset-bottom)); justify-content: center; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--warn); margin-right: 5px; vertical-align: 1px; }
+.dot.ok { background: var(--ok); }
+button { font: 600 15px system-ui, sans-serif; color: var(--ink); background: rgba(244,236,219,.12); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; min-height: 46px; }
+button.primary { background: var(--brick); border-color: var(--brick); color: #1f1a14; }
+button:focus-visible { outline: 3px solid var(--warn); outline-offset: 2px; }
+
+#cross { position: fixed; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; pointer-events: none; }
+#cross::before, #cross::after { content: ""; position: absolute; background: rgba(255,255,255,.85); box-shadow: 0 0 2px #000; }
+#cross::before { left: 21px; top: 0; width: 2px; height: 44px; }
+#cross::after { top: 21px; left: 0; height: 2px; width: 44px; }
+#hint { position: fixed; left: 50%; top: calc(50% + 40px); transform: translateX(-50%); background: var(--panel); padding: 6px 12px; border-radius: 8px; font-weight: 600; white-space: nowrap; }
+
+#more { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(28,23,17,.95); padding: 16px max(16px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); display: grid; gap: 14px; max-height: 70%; overflow-y: auto; border-top: 1px solid var(--line); }
+#more label { display: grid; gap: 4px; font-size: 14px; }
+#more label span { display: flex; justify-content: space-between; }
+#more input[type=range] { width: 100%; }
+#more .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.check { display: flex !important; grid-template-columns: none; align-items: center; gap: 10px; }
+
+#start { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px max(20px, env(safe-area-inset-right)) 24px max(20px, env(safe-area-inset-left)); background: #1f1a14; overflow-y: auto; }
+#start .card { max-width: 30em; display: grid; gap: 14px; }
+#start h1 { font: 400 34px/1.05 Georgia, "Times New Roman", serif; margin: 0; }
+#start h1 em { color: var(--brick); }
+#start p { margin: 0; color: #d8ccb4; }
+#start ol { margin: 0; padding-left: 20px; color: #d8ccb4; display: grid; gap: 6px; }
+#start .row { display: flex; gap: 10px; flex-wrap: wrap; }
+#err { color: var(--warn); }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<video id="video" playsinline muted autoplay hidden></video>
+<canvas id="gl"></canvas>
+<div id="cross" hidden></div>
+<div id="hint" hidden></div>
+
+<div id="top" class="bar" hidden>
+  <span><span id="gpsdot" class="dot"></span>GPS <b id="gps">wachten…</b></span>
+  <span><span id="cmpdot" class="dot"></span>Kompas <b id="cmp">wachten…</b></span>
+  <span>Kasteel <b id="dist">–</b> op <b id="brg">–</b></span>
+</div>
+
+<div id="bottom" class="bar" hidden>
+  <button id="nudgeL" type="button" aria-label="Draai kasteel 1 graad naar links">◀ 1°</button>
+  <button id="here" class="primary" type="button">Kasteel hier</button>
+  <button id="nudgeR" type="button" aria-label="Draai kasteel 1 graad naar rechts">1° ▶</button>
+  <button id="zoom" type="button" aria-label="Zoom">1×</button>
+  <button id="moreBtn" type="button">Instellingen</button>
+</div>
+
+<div id="more" hidden>
+  <label for="eye"><span>Hoogte van je camera boven het land bij het kasteel <b id="eyeV"></b></span>
+    <input id="eye" type="range" min="0" max="15" step="0.5"></label>
+  <label for="fov"><span>Beeldhoek (pas aan tot de maat klopt) <b id="fovV"></b></span>
+    <input id="fov" type="range" min="35" max="90" step="1"></label>
+  <label for="opa"><span>Doorzichtigheid kasteel <b id="opaV"></b></span>
+    <input id="opa" type="range" min="0.3" max="1" step="0.05"></label>
+  <label class="check" for="fixed"><input id="fixed" type="checkbox"> Gebruik vaste standplaats op de dijk in plaats van live GPS</label>
+  <p style="margin:0;font-size:14px;color:#d8ccb4">Draaicorrectie nu: <b id="offV"></b>. Richt het kruisje op het midden van het bosje en tik “Kasteel hier” om het kompas te corrigeren.</p>
+  <div class="row">
+    <button id="reset" type="button">Correctie wissen</button>
+    <button id="close" class="primary" type="button">Klaar</button>
+  </div>
+</div>
+
+<div id="start">
+  <div class="card">
+    <h1>Kasteel <em>Hulhuizen</em></h1>
+    <p>Richt je telefoon vanaf de dijk op het bosje in de uiterwaard. Op die plek zie je het kasteel, de voorburcht en de kapel zoals ze er in de 17de eeuw ongeveer uitzagen.</p>
+    <ol>
+      <li>Ga op de dijk staan, kijk richting oost-zuidoost naar het bosje (ongeveer 650 m).</li>
+      <li>Tik op Start en geef toegang tot camera en locatie.</li>
+      <li>Staat het kasteel niet precies op het bosje? Zet het kruisje op het midden van het bosje en tik “Kasteel hier”.</li>
+    </ol>
+    <p style="font-size:14px">De maten van de gebouwen zijn een schatting op basis van oude kaarten. De ligging en de vorm komen uit de kaarten in Overmars, <i>Een Waal Verhaal</i> (2020).</p>
+    <div class="row">
+      <button id="go" class="primary" type="button">Start AR</button>
+      <button id="demo" type="button">Voorbeeld zonder camera</button>
+    </div>
+    <p id="err" hidden></p>
+  </div>
+</div>
+
+<script src="three.min.js"></script>
+<script src="model.js"></script>
+<script>
+(function () {
+  // Castle centre (given by Gerico: the clump of trees) and the viewing spot on the dike.
+  const SITE = { lat: 51.8837564, lon: 6.0123375 };
+  const DIKE = { lat: 51.8853158, lon: 6.0032656 };
+  const R = 6371008.8, D2R = Math.PI / 180;
+
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('hulhuizen.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem('hulhuizen.' + k, JSON.stringify(v)); } catch (e) {} },
+  };
+  const S = {
+    eye: store.get('eye', 6.5),       // 1.6 m eye height + estimated dike height; adjust on site
+    fov: store.get('fov', 60),
+    opa: store.get('opa', 1),
+    offset: store.get('offset', 0),   // compass correction in degrees
+    fixed: store.get('fixed', false),
+  };
+  let user = { lat: DIKE.lat, lon: DIKE.lon, acc: null, live: false };
+  let mode = null; // 'ar' | 'demo'
+  let zoom = 1;
+
+  // ---------- three.js ----------
+  const canvas = $('gl');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.setClearColor(0x000000, 0);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(S.fov, 1, 1, 5000);
+  camera.rotation.order = 'YXZ';
+  scene.add(new THREE.HemisphereLight(0xeef2f0, 0x6b6a4a, 0.8));
+  const sun = new THREE.DirectionalLight(0xfff1dc, 1.0); sun.position.set(-300, 400, 250); scene.add(sun);
+
+  const world = new THREE.Group(); scene.add(world);     // rotated by the compass correction
+  const castle = window.buildHulhuizen(THREE); world.add(castle);
+
+  function enu(from, to) {
+    const n = (to.lat - from.lat) * D2R * R;
+    const e = (to.lon - from.lon) * D2R * R * Math.cos(((from.lat + to.lat) / 2) * D2R);
+    return { e, n };
+  }
+  const norm = a => ((a % 360) + 540) % 360 - 180;
+
+  function applyOpacity() {
+    castle.traverse(o => { if (o.material) { o.material.transparent = S.opa < 1; o.material.opacity = S.opa; o.material.depthWrite = true; } });
+  }
+  applyOpacity();
+
+  function resize() {
+    const w = innerWidth, h = innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    // digital zoom: enlarge the video and narrow the 3D view by the same factor, so alignment holds
+    camera.fov = 2 * Math.atan(Math.tan(S.fov * D2R / 2) / zoom) / D2R;
+    camera.updateProjectionMatrix();
+    $('video').style.transform = 'scale(' + zoom + ')';
+  }
+  addEventListener('resize', resize); resize();
+
+  // ---------- device orientation (Android Chrome: deviceorientationabsolute) ----------
+  const target = new THREE.Quaternion();
+  const zee = new THREE.Vector3(0, 0, 1);
+  const euler = new THREE.Euler();
+  const q0 = new THREE.Quaternion();
+  const q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)); // camera looks out the back of the device
+  let haveCompass = false, lastHeading = null;
+  function onOrient(e) {
+    if (e.alpha === null) return;
+    if (e.type === 'deviceorientation' && !e.absolute) return; // only absolute (north-referenced) readings
+    haveCompass = true;
+    const orient = ((screen.orientation && screen.orientation.angle) || window.orientation || 0) * D2R;
+    euler.set(e.beta * D2R, e.alpha * D2R, -e.gamma * D2R, 'YXZ');
+    target.setFromEuler(euler).multiply(q1).multiply(q0.setFromAxisAngle(zee, -orient));
+  }
+  function startOrientation() {
+    if ('ondeviceorientationabsolute' in window) addEventListener('deviceorientationabsolute', onOrient);
+    else addEventListener('deviceorientation', onOrient);
+  }
+
+  // ---------- GPS ----------
+  function startGPS() {
+    if (!navigator.geolocation) { $('gps').textContent = 'niet beschikbaar'; return; }
+    navigator.geolocation.watchPosition(p => {
+      user = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, live: true };
+    }, err => { $('gps').textContent = 'geen toegang (' + err.code + ')'; }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
+  }
+
+  // ---------- camera ----------
+  async function startCamera() {
+    const v = $('video');
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    v.srcObject = stream; v.hidden = false; await v.play();
+  }
+
+  function heading(q) {
+    const f = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+    return (Math.atan2(f.x, -f.z) / D2R + 360) % 360;
+  }
+
+  // ---------- per frame ----------
+  function frame() {
+    requestAnimationFrame(frame);
+    const from = S.fixed || !user.live ? DIKE : user;
+    const d = enu(from, SITE);
+    castle.position.set(d.e, 0, -d.n);
+    world.rotation.y = -S.offset * D2R;
+    camera.position.set(0, S.eye, 0);
+    if (mode === 'ar') camera.quaternion.slerp(target, haveCompass ? 0.18 : 0);
+    renderer.render(scene, camera);
+
+    // status
+    const dist = Math.hypot(d.e, d.n), brg = (Math.atan2(d.e, d.n) / D2R + 360) % 360;
+    $('dist').textContent = Math.round(dist) + ' m';
+    $('brg').textContent = Math.round(brg) + '°';
+    if (S.fixed) { $('gps').textContent = 'vaste dijkpositie'; $('gpsdot').classList.add('ok'); }
+    else if (user.live) { $('gps').textContent = '±' + Math.round(user.acc) + ' m'; $('gpsdot').classList.toggle('ok', user.acc < 15); }
+    const h = heading(camera.quaternion);
+    if (mode === 'ar') {
+      $('cmp').textContent = haveCompass ? Math.round(h) + '°' : 'geen signaal';
+      $('cmpdot').classList.toggle('ok', haveCompass);
+    } else { $('cmp').textContent = Math.round(h) + '° (voorbeeld)'; $('cmpdot').classList.add('ok'); }
+    // turn hint when the castle is out of view
+    const diff = norm(brg + S.offset - h);
+    const halfH = Math.atan(Math.tan(camera.fov * D2R / 2) * camera.aspect) / D2R;
+    const hint = $('hint');
+    if (Math.abs(diff) > halfH) { hint.hidden = false; hint.textContent = diff > 0 ? `Draai ${Math.round(diff)}° naar rechts ▶` : `◀ Draai ${Math.round(-diff)}° naar links`; }
+    else hint.hidden = true;
+    $('offV').textContent = (S.offset >= 0 ? '+' : '') + S.offset.toFixed(1) + '°';
+  }
+
+  // ---------- controls ----------
+  function setOffset(v) { S.offset = norm(v); store.set('offset', S.offset); }
+  $('here').onclick = () => {
+    const from = S.fixed || !user.live ? DIKE : user, d = enu(from, SITE);
+    const brg = Math.atan2(d.e, d.n) / D2R;
+    setOffset(heading(camera.quaternion) - brg);
+  };
+  $('zoom').onclick = () => { zoom = zoom === 1 ? 2 : zoom === 2 ? 4 : 1; $('zoom').textContent = zoom + '×'; resize(); };
+  $('nudgeL').onclick = () => setOffset(S.offset - 1);
+  $('nudgeR').onclick = () => setOffset(S.offset + 1);
+  $('moreBtn').onclick = () => { $('more').hidden = false; $('bottom').hidden = true; };
+  $('close').onclick = () => { $('more').hidden = true; $('bottom').hidden = false; };
+  $('reset').onclick = () => setOffset(0);
+  function bindRange(id, key, fmt, after) {
+    const el = $(id), out = $(id + 'V');
+    el.value = S[key]; out.textContent = fmt(S[key]);
+    el.oninput = () => { S[key] = +el.value; store.set(key, S[key]); out.textContent = fmt(S[key]); after && after(); };
+  }
+  bindRange('eye', 'eye', v => v.toFixed(1) + ' m');
+  bindRange('fov', 'fov', v => v + '°', resize);
+  bindRange('opa', 'opa', v => Math.round((1 - v) * 100) + '%', applyOpacity);
+  $('fixed').checked = S.fixed;
+  $('fixed').onchange = e => { S.fixed = e.target.checked; store.set('fixed', S.fixed); };
+
+  function showUI() {
+    $('start').hidden = true;
+    ['top', 'bottom', 'cross'].forEach(id => $(id).hidden = false);
+  }
+
+  $('go').onclick = async () => {
+    const err = $('err'); err.hidden = true;
+    try {
+      await startCamera();
+    } catch (e) {
+      err.hidden = false;
+      err.textContent = 'De camera start niet: ' + (e.name || e.message) + '. Open de app via https in Chrome en sta cameratoegang toe.';
+      return;
+    }
+    mode = 'ar';
+    startOrientation(); startGPS(); showUI();
+  };
+
+  // Demo: viewed from the fixed dike position, drag to look around.
+  $('demo').onclick = () => {
+    mode = 'demo'; S.fixed = true; $('fixed').checked = true;
+    document.body.classList.add('preview'); showUI();
+    $('here').hidden = $('nudgeL').hidden = $('nudgeR').hidden = true;
+    const d = enu(DIKE, SITE);
+    let yaw = -Math.atan2(d.e, d.n), pitch = 0, last = null;
+    const apply = () => camera.rotation.set(pitch, yaw, 0, 'YXZ');
+    apply();
+    canvas.addEventListener('pointerdown', e => { last = [e.clientX, e.clientY]; canvas.setPointerCapture(e.pointerId); });
+    canvas.addEventListener('pointermove', e => {
+      if (!last) return;
+      yaw += (e.clientX - last[0]) * 0.003 * S.fov / 60; pitch += (e.clientY - last[1]) * 0.003 * S.fov / 60;
+      pitch = Math.max(-1.2, Math.min(1.2, pitch)); last = [e.clientX, e.clientY]; apply();
+    });
+    canvas.addEventListener('pointerup', () => { last = null; });
+    canvas.addEventListener('wheel', e => { S.fov = Math.max(5, Math.min(90, S.fov * (e.deltaY > 0 ? 1.1 : 0.9))); resize(); e.preventDefault(); }, { passive: false });
+  };
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
